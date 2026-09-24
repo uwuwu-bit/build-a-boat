@@ -1,0 +1,807 @@
+-- Build a Boat for Treasure - Auto Farm Script
+-- Compatibile con Xeno Executor
+-- GUI Moderna con Fluent UI
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
+local HttpService = game:GetService("HttpService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+
+-- Carica Fluent UI
+local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
+local SaveManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Plugins/SaveManager.lua"))()
+local InterfaceManager = loadstring(game:HttpGet("https://raw.githubusercontent.com/dawid-scripts/Fluent/master/Plugins/InterfaceManager.lua"))()
+
+-- Variabili Settings
+local Settings = {
+    AutoFarmGold = false,
+    AutoFarmGoldBlocks = false,
+    AutoCompleteStages = false,
+    AutoCollectChest = false,
+    FastFarm = false,
+    AntiAFK = true,
+    ESPGoldBlocks = false,
+    Fly = false,
+    Speed = 16,
+    Jump = 50,
+    StageDuration = 0.5,
+    MaxStages = 10
+}
+
+-- Trova elementi importanti nel workspace
+local Stages = nil
+local ClaimGoldEvent = nil
+local ChangeCharacterEvent = nil
+local Treasure = nil
+
+local function InitializeGameObjects()
+    -- Trova gli stage
+    local success, result = pcall(function()
+        return Workspace:WaitForChild("BoatStages"):WaitForChild("NormalStages")
+    end)
+    if success then
+        Stages = result
+    end
+    
+    -- Trova eventi remoti
+    pcall(function()
+        ClaimGoldEvent = Workspace:WaitForChild("ClaimRiverResultsGold")
+        ChangeCharacterEvent = Workspace:WaitForChild("ChangeCharacter")
+    end)
+    
+    -- Trova il tesoro
+    pcall(function()
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj.Name == "Treasure" or obj.Name:find("Chest") then
+                Treasure = obj
+                break
+            end
+        end
+    end)
+end
+
+InitializeGameObjects()
+
+-- Funzione Anti AFK
+local function SetupAntiAFK()
+    if not Settings.AntiAFK then return end
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+        wait(1)
+        VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+    end)
+end
+
+-- Funzione per trovare i Gold Blocks
+local function GetGoldBlocks()
+    local blocks = {}
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name == "GoldBlock" or obj.Name:find("Gold") and obj:IsA("BasePart") then
+            table.insert(blocks, obj)
+        end
+    end
+    return blocks
+end
+
+-- Funzione per trovare il tesoro
+local function FindTreasure()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj.Name == "Treasure" or (obj:IsA("BasePart") and obj.Position.Z > 9000) then
+            return obj
+        end
+    end
+    return nil
+end
+
+-- Funzione Auto Farm Gold (completa tutti gli stage e raccoglie tesoro)
+local function AutoFarmGold()
+    while Settings.AutoFarmGold do
+        local char = LocalPlayer.Character
+        if not char then
+            LocalPlayer.CharacterAdded:Wait()
+            char = LocalPlayer.Character
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            wait(1)
+            continue
+        end
+        
+        -- Metodo 1: Teleport attraverso gli stage
+        if Stages then
+            for i = 1, Settings.MaxStages do
+                if not Settings.AutoFarmGold then break end
+                
+                local stage = Stages:FindFirstChild("CaveStage" .. i) or Stages:FindFirstChild("Stage" .. i)
+                if stage then
+                    local endPart = stage:FindFirstChild("DarknessPart") or stage:FindFirstChild("End") or stage:FindFirstChildWhichIsA("Part")
+                    if endPart then
+                        -- Teleport al centro dello stage
+                        local targetCFrame = CFrame.new(endPart.Position.X, 50, endPart.Position.Z)
+                        hrp.CFrame = targetCFrame
+                        
+                        -- Aspetta il tempo necessario per registrare lo stage
+                        wait(Settings.StageDuration)
+                    end
+                end
+            end
+        end
+        
+        -- Metodo 2: Vai direttamente al tesoro
+        local treasure = FindTreasure()
+        if treasure then
+            -- Vai alla posizione del tesoro
+            local targetPos = treasure.Position + Vector3.new(0, 10, 0)
+            hrp.CFrame = CFrame.new(targetPos)
+            wait(0.5)
+            
+            -- Tocca il tesoro
+            if treasure:FindFirstChild("TouchInterest") then
+                firetouchinterest(treasure, hrp, 0)
+                firetouchinterest(treasure, hrp, 1)
+            end
+            
+            -- Usa l'evento remoto se disponibile
+            if ClaimGoldEvent then
+                pcall(function()
+                    ClaimGoldEvent:FireServer()
+                end)
+            end
+            
+            wait(1)
+        end
+        
+        -- Metodo 3: Vai molto lontano (oltre il tesoro) per triggerare il completamento
+        hrp.CFrame = CFrame.new(0, 50, 10000)
+        wait(0.5)
+        
+        -- Reset per ripetere
+        if ChangeCharacterEvent then
+            pcall(function()
+                ChangeCharacterEvent:FireServer()
+            end)
+        else
+            -- Se non trova l'evento, usa il metodo alternativo
+            char:BreakJoints()
+        end
+        
+        wait(3) -- Attendi respawn
+    end
+end
+
+-- Funzione Auto Farm Gold Blocks
+local function AutoFarmGoldBlocks()
+    while Settings.AutoFarmGoldBlocks do
+        local blocks = GetGoldBlocks()
+        local char = LocalPlayer.Character
+        if not char then
+            wait(1)
+            continue
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            wait(1)
+            continue
+        end
+        
+        for _, block in pairs(blocks) do
+            if not Settings.AutoFarmGoldBlocks then break end
+            
+            if block and block.Parent then
+                -- Teleport al blocco
+                hrp.CFrame = CFrame.new(block.Position + Vector3.new(0, 5, 0))
+                wait(0.2)
+                
+                -- Tocca il blocco
+                if block:FindFirstChild("TouchInterest") then
+                    firetouchinterest(block, hrp, 0)
+                    firetouchinterest(block, hrp, 1)
+                end
+                
+                wait(0.1)
+            end
+        end
+        
+        wait(1)
+    end
+end
+
+-- Funzione Fast Farm (ottimizzato per massima velocità)
+local function FastFarm()
+    while Settings.FastFarm do
+        local char = LocalPlayer.Character
+        if not char then
+            LocalPlayer.CharacterAdded:Wait()
+            char = LocalPlayer.Character
+        end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then
+            wait(0.5)
+            continue
+        end
+        
+        -- Teleport istantaneo alla fine
+        hrp.CFrame = CFrame.new(0, 100, 9200) -- Coordinate approssimative del tesoro
+        wait(0.3)
+        
+        -- Trigger evento gold
+        if ClaimGoldEvent then
+            for i = 1, 3 do -- Fire multiple times per sicurezza
+                pcall(function()
+                    ClaimGoldEvent:FireServer()
+                end)
+            end
+        end
+        
+        wait(0.2)
+        
+        -- Reset veloce
+        if ChangeCharacterEvent then
+            pcall(function()
+                ChangeCharacterEvent:FireServer()
+            end)
+        else
+            char:BreakJoints()
+        end
+        
+        wait(1.5) -- Tempo minimo per respawn
+    end
+end
+
+-- ESP per Gold Blocks
+local ESPFolder = Instance.new("Folder", CoreGui)
+ESPFolder.Name = "BABFT_ESP"
+
+local function CreateESP(target, color, label)
+    if not target or not target:IsA("BasePart") then return end
+    
+    -- Rimuovi ESP esistente
+    for _, child in pairs(ESPFolder:GetChildren()) do
+        if child.Adornee == target then
+            child:Destroy()
+        end
+    end
+    
+    local esp = Instance.new("BillboardGui")
+    esp.Name = "GoldESP"
+    esp.AlwaysOnTop = true
+    esp.Size = UDim2.new(0, 100, 0, 40)
+    esp.StudsOffset = Vector3.new(0, 3, 0)
+    esp.Adornee = target
+    esp.Parent = ESPFolder
+    
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, 0, 1, 0)
+    frame.BackgroundColor3 = color
+    frame.BackgroundTransparency = 0.3
+    frame.BorderSizePixel = 0
+    frame.Parent = esp
+    
+    local text = Instance.new("TextLabel")
+    text.Size = UDim2.new(1, 0, 0.5, 0)
+    text.Position = UDim2.new(0, 0, 0, 0)
+    text.BackgroundTransparency = 1
+    text.Text = label
+    text.TextColor3 = Color3.new(1, 1, 1)
+    text.TextStrokeTransparency = 0
+    text.TextScaled = true
+    text.Font = Enum.Font.GothamBold
+    text.Parent = esp
+    
+    local distText = Instance.new("TextLabel")
+    distText.Size = UDim2.new(1, 0, 0.5, 0)
+    distText.Position = UDim2.new(0, 0, 0.5, 0)
+    distText.BackgroundTransparency = 1
+    distText.Text = "0 studs"
+    distText.TextColor3 = Color3.new(1, 1, 0)
+    distText.TextStrokeTransparency = 0
+    distText.TextScaled = true
+    distText.Font = Enum.Font.Gotham
+    distText.Parent = esp
+    
+    -- Aggiorna distanza
+    spawn(function()
+        while esp and esp.Parent do
+            local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+            if hrp and target and target.Parent then
+                local distance = (hrp.Position - target.Position).Magnitude
+                distText.Text = math.floor(distance) .. " studs"
+            end
+            wait(0.5)
+        end
+    end)
+end
+
+local function UpdateESP()
+    while Settings.ESPGoldBlocks do
+        ESPFolder:ClearAllChildren()
+        
+        local blocks = GetGoldBlocks()
+        for _, block in pairs(blocks) do
+            if block:IsA("BasePart") then
+                CreateESP(block, Color3.fromRGB(255, 215, 0), "GOLD BLOCK")
+            end
+        end
+        
+        -- ESP per il tesoro
+        local treasure = FindTreasure()
+        if treasure and treasure:IsA("BasePart") then
+            CreateESP(treasure, Color3.fromRGB(0, 255, 0), "TREASURE")
+        end
+        
+        wait(2)
+    end
+    ESPFolder:ClearAllChildren()
+end
+
+-- Fly System
+local flying = false
+local flySpeed = 50
+
+local function Fly()
+    local character = LocalPlayer.Character
+    if not character then return end
+    
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not hrp or not humanoid then return end
+    
+    local bv = Instance.new("BodyVelocity")
+    bv.Name = "FlyVelocity"
+    bv.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+    bv.Velocity = Vector3.zero
+    bv.Parent = hrp
+    
+    local bg = Instance.new("BodyGyro")
+    bg.Name = "FlyGyro"
+    bg.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+    bg.P = 9e9
+    bg.CFrame = hrp.CFrame
+    bg.Parent = hrp
+    
+    while flying do
+        local camCF = Workspace.CurrentCamera.CFrame
+        local direction = Vector3.zero
+        
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
+            direction = direction + camCF.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
+            direction = direction - camCF.LookVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+            direction = direction - camCF.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+            direction = direction + camCF.RightVector
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
+            direction = direction + Vector3.new(0, 1, 0)
+        end
+        if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
+            direction = direction - Vector3.new(0, 1, 0)
+        end
+        
+        if direction.Magnitude > 0 then
+            bv.Velocity = direction.Unit * flySpeed
+        else
+            bv.Velocity = Vector3.zero
+        end
+        
+        bg.CFrame = camCF
+        
+        RunService.RenderStepped:Wait()
+    end
+    
+    if hrp:FindFirstChild("FlyVelocity") then
+        hrp.FlyVelocity:Destroy()
+    end
+    if hrp:FindFirstChild("FlyGyro") then
+        hrp.FlyGyro:Destroy()
+    end
+end
+
+-- Creazione GUI Fluent
+local Window = Fluent:CreateWindow({
+    Title = "BABFT | Auto Farm Pro",
+    SubTitle = "Build a Boat for Treasure | Xeno Compatible",
+    TabWidth = 160,
+    Size = UDim2.fromOffset(600, 480),
+    Acrylic = true,
+    Theme = "Darker",
+    MinimizeKey = Enum.KeyCode.LeftControl
+})
+
+-- Tabs
+local Tabs = {
+    Main = Window:AddTab({ Title = "Main", Icon = "rbxassetid://4483345998" }),
+    AutoFarm = Window:AddTab({ Title = "Auto Farm", Icon = "rbxassetid://4483345998" }),
+    Teleport = Window:AddTab({ Title = "Teleport", Icon = "rbxassetid://4483345998" }),
+    Player = Window:AddTab({ Title = "Player", Icon = "rbxassetid://4483345998" }),
+    Misc = Window:AddTab({ Title = "Misc", Icon = "rbxassetid://4483345998" })
+}
+
+-- Main Tab
+Tabs.Main:AddParagraph({
+    Title = "Build a Boat for Treasure Script",
+    Content = "Script avanzato con Auto Farm per Gold e Gold Blocks. Creato per Xeno Executor."
+})
+
+Tabs.Main:AddButton({
+    Title = "Riscatta Codici",
+    Description = "Riscatta automaticamente tutti i codici validi",
+    Callback = function()
+        local codes = {
+            "=D", "discord", "hi", "squid army", "chillthrill709", 
+            "Happy Easter", "Lurking Legend", "Beach", "BigBoiBilly", 
+            "LilBoiBilly", "100M", "100K", "1M", "10M"
+        }
+        
+        local redeemed = 0
+        for _, code in pairs(codes) do
+            pcall(function()
+                local args = {code}
+                -- Cerca il remote event per i codici
+                local codeEvent = ReplicatedStorage:FindFirstChild("RedeemCode") or 
+                                 ReplicatedStorage:FindFirstChild("CodeEvent")
+                if codeEvent then
+                    codeEvent:FireServer(unpack(args))
+                    redeemed = redeemed + 1
+                end
+            end)
+            wait(0.3)
+        end
+        
+        Fluent:Notify({
+            Title = "Codici",
+            Content = "Tentativo di riscatto " .. redeemed .. " codici completato!",
+            Duration = 3
+        })
+    end
+})
+
+Tabs.Main:AddButton({
+    Title = "Inizializza Game Objects",
+    Description = "Ricerca elementi di gioco importanti",
+    Callback = function()
+        InitializeGameObjects()
+        Fluent:Notify({
+            Title = "Inizializzazione",
+            Content = "Game objects trovati: Stages=" .. tostring(Stages ~= nil) .. 
+                     ", GoldEvent=" .. tostring(ClaimGoldEvent ~= nil),
+            Duration = 3
+        })
+    end
+})
+
+-- Auto Farm Tab
+local AutoFarmGoldToggle = Tabs.AutoFarm:AddToggle("AutoFarmGold", {
+    Title = "Auto Farm Gold (Standard)",
+    Description = "Completa tutti gli stage e raccoglie il tesoro",
+    Default = false,
+    Callback = function(Value)
+        Settings.AutoFarmGold = Value
+        if Value then
+            coroutine.wrap(AutoFarmGold)()
+        end
+    end
+})
+
+local FastFarmToggle = Tabs.AutoFarm:AddToggle("FastFarm", {
+    Title = "Fast Farm (Velocità Massima)",
+    Description = "Farm ultra veloce con teleport diretto",
+    Default = false,
+    Callback = function(Value)
+        Settings.FastFarm = Value
+        if Value then
+            coroutine.wrap(FastFarm)()
+        end
+    end
+})
+
+local AutoGoldBlocksToggle = Tabs.AutoFarm:AddToggle("AutoGoldBlocks", {
+    Title = "Auto Farm Gold Blocks",
+    Description = "Raccoglie automaticamente i Gold Blocks sparsi",
+    Default = false,
+    Callback = function(Value)
+        Settings.AutoFarmGoldBlocks = Value
+        if Value then
+            coroutine.wrap(AutoFarmGoldBlocks)()
+        end
+    end
+})
+
+Tabs.AutoFarm:AddSlider("StageDuration", {
+    Title = "Durata per Stage",
+    Description = "Secondi da attendere in ogni stage",
+    Default = 0.5,
+    Min = 0.1,
+    Max = 2,
+    Rounding = 1,
+    Callback = function(Value)
+        Settings.StageDuration = Value
+    end
+})
+
+-- Teleport Tab
+Tabs.Teleport:AddButton({
+    Title = "Teleport al Tesoro",
+    Description = "Vai direttamente al tesoro",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(0, 50, 9200)
+                Fluent:Notify({
+                    Title = "Teleport",
+                    Content = "Teletrasportato al tesoro!",
+                    Duration = 2
+                })
+            end
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport alla Base",
+    Description = "Torna alla base (White Team)",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(0, 20, 0)
+            end
+        end
+    end
+})
+
+Tabs.Teleport:AddButton({
+    Title = "Teleport allo Shop",
+    Description = "Vai allo shop",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                hrp.CFrame = CFrame.new(-50, 20, -100)
+            end
+        end
+    end
+})
+
+-- Stage Teleports
+for i = 1, 10 do
+    Tabs.Teleport:AddButton({
+        Title = "Teleport a Stage " .. i,
+        Callback = function()
+            local char = LocalPlayer.Character
+            if char and Stages then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                local stage = Stages:FindFirstChild("CaveStage" .. i) or Stages:FindFirstChild("Stage" .. i)
+                if hrp and stage then
+                    local endPart = stage:FindFirstChildWhichIsA("Part")
+                    if endPart then
+                        hrp.CFrame = CFrame.new(endPart.Position.X, 50, endPart.Position.Z)
+                    end
+                end
+            end
+        end
+    })
+end
+
+-- Player Tab
+Tabs.Player:AddSlider("WalkSpeed", {
+    Title = "Walk Speed",
+    Default = 16,
+    Min = 16,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        Settings.Speed = Value
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+        if hum then
+            hum.WalkSpeed = Value
+        end
+    end
+})
+
+Tabs.Player:AddSlider("JumpPower", {
+    Title = "Jump Power",
+    Default = 50,
+    Min = 50,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        Settings.Jump = Value
+        local hum = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid")
+        if hum then
+            hum.JumpPower = Value
+        end
+    end
+})
+
+local FlyToggle = Tabs.Player:AddToggle("Fly", {
+    Title = "Fly (E per attivare)",
+    Description = "Premi E per volare",
+    Default = false,
+    Callback = function(Value)
+        Settings.Fly = Value
+        if Value then
+            UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if gameProcessed then return end
+                if input.KeyCode == Enum.KeyCode.E then
+                    flying = not flying
+                    if flying then
+                        coroutine.wrap(Fly)()
+                    end
+                end
+            end)
+        else
+            flying = false
+        end
+    end
+})
+
+Tabs.Player:AddSlider("FlySpeed", {
+    Title = "Fly Speed",
+    Default = 50,
+    Min = 10,
+    Max = 200,
+    Rounding = 0,
+    Callback = function(Value)
+        flySpeed = Value
+    end
+})
+
+-- Misc Tab
+local ESPToggle = Tabs.Misc:AddToggle("ESPGoldBlocks", {
+    Title = "ESP Gold Blocks",
+    Description = "Mostra posizione Gold Blocks e Tesoro",
+    Default = false,
+    Callback = function(Value)
+        Settings.ESPGoldBlocks = Value
+        if Value then
+            coroutine.wrap(UpdateESP)()
+        else
+            ESPFolder:ClearAllChildren()
+        end
+    end
+})
+
+local AntiAFKToggle = Tabs.Misc:AddToggle("AntiAFK", {
+    Title = "Anti AFK",
+    Default = true,
+    Callback = function(Value)
+        Settings.AntiAFK = Value
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "God Mode (Semi)",
+    Description = "Attiva god mode parziale",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char then
+            for _, part in pairs(char:GetDescendants()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
+                end
+            end
+            Fluent:Notify({
+                Title = "God Mode",
+                Content = "Collisioni disattivate!",
+                Duration = 2
+            })
+        end
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Infinite Jump",
+    Description = "Salta infinite volte",
+    Callback = function()
+        local UserInputService = game:GetService("UserInputService")
+        UserInputService.JumpRequest:Connect(function()
+            local char = LocalPlayer.Character
+            if char then
+                local hum = char:FindFirstChild("Humanoid")
+                if hum then
+                    hum:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end
+        end)
+        Fluent:Notify({
+            Title = "Infinite Jump",
+            Content = "Attivato!",
+            Duration = 2
+        })
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Server Hop",
+    Description = "Cambia server",
+    Callback = function()
+        local Http = game:GetService("HttpService")
+        local TPS = game:GetService("TeleportService")
+        local Api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        
+        local function ListServers(cursor)
+            local Raw = game:HttpGet(Api .. ((cursor and "&cursor=" .. cursor) or ""))
+            return Http:JSONDecode(Raw)
+        end
+        
+        local Servers = ListServers()
+        while #Servers.data == 0 do
+            wait(1)
+            Servers = ListServers()
+        end
+        
+        local Server = Servers.data[math.random(1, math.min(#Servers.data, 10))]
+        TPS:TeleportToPlaceInstance(game.PlaceId, Server.id)
+    end
+})
+
+Tabs.Misc:AddButton({
+    Title = "Rejoin Server",
+    Description = "Rientra nello stesso server",
+    Callback = function()
+        game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer)
+    end
+})
+
+-- Setup iniziale
+SetupAntiAFK()
+
+-- Auto-update character reference
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+    if Settings.Speed ~= 16 then
+        local hum = char:WaitForChild("Humanoid")
+        hum.WalkSpeed = Settings.Speed
+    end
+    if Settings.Jump ~= 50 then
+        local hum = char:WaitForChild("Humanoid")
+        hum.JumpPower = Settings.Jump
+    end
+end)
+
+-- Notifica di caricamento
+Fluent:Notify({
+    Title = "BABFT Script Caricato",
+    Content = "Auto Farm Pro attivo! Xeno Compatible v2.0",
+    Duration = 5
+})
+
+-- Loop Anti AFK
+spawn(function()
+    while true do
+        if Settings.AntiAFK then
+            VirtualUser:Button2Down(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+            wait(1)
+            VirtualUser:Button2Up(Vector2.new(0, 0), Workspace.CurrentCamera.CFrame)
+        end
+        wait(30)
+    end
+end)
+
+-- Auto reconnect se il personaggio muore
+LocalPlayer.CharacterRemoving:Connect(function()
+    if Settings.AutoFarmGold or Settings.FastFarm then
+        wait(2)
+        -- Lo script riprenderà automaticamente quando il nuovo character spawna
+    end
+end)
